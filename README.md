@@ -1,38 +1,103 @@
-# Antigravity Desktop Float Monitor (桌面监控悬浮窗)
+<div align="center">
 
-专为 **Google Antigravity** 打造的桌面极简进度监控悬浮窗。解决 Agent 长时间运行盲等、进程卡死无感知、失败无限死循环消耗额度的问题。
+# Antigravity Float Monitor · 桌面任务与实时额度监控悬浮窗
+
+**专为 Google Antigravity 打造的 Windows 轻量级桌面悬浮监控窗（多窗口感知 · 实时额度直连 · 防假死探针）**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+
+**简体中文** | [English](README.en.md) | [日本語](README.ja.md)
+
+</div>
 
 ---
 
-## 🎨 界面与核心特性
-1. **暗黑磨砂玻璃质感**：无边框、半透明磨砂黑底、屏幕右上角置顶、鼠标任意位置按住即可自由拖拽；
-2. **圆环进度指示器 (Progress Ring)**：实时绘制百分比圆环（运行中天蓝、完成翠绿、熔断阻断亮红）；
-3. **分阶段清单与子任务 (Subtasks Checklist)**：清晰呈现每一步的标题、执行状态（✔ 已完成、∿ 进行中、🕒 等待中）与百分比；
-4. **一键折叠/展开**：点击右上角 `▲` / `▼` 按钮可一键折叠为极简胶囊，不遮挡工作区；
-5. **探针心跳告警**：内置心跳活跃度检测，若日志超过 90 秒未刷新会自动亮红警示。
+## ✨ 核心特性
+
+- **双形态无缝切换**：支持极简**迷你胶囊态（Pill）**与**完整大卡片态（Card）**，胶囊宽度自适应内容并保持右边缘锚定，Windows 11 下自动启用原生亚克力毛玻璃质感。
+- **多窗口智能感知**：自动扫描 Antigravity 所有活跃会话窗口，优先置顶正在运行的任务（`W1`），支持鼠标滚轮、连体导航键及菜单一键切换，并可双击唤醒对应主窗口。
+- **0 Token 损耗直连真实额度**：后台线程直连本地 Language Server RPC 接口，毫秒级获取各模型 5 小时 / 周真实剩余额度与重置倒计时，底部四模型徽章按剩余额度自动切换绿 / 黄 / 红预警配色。
+- **防假死心跳探针 & 急停保护**：实时监测任务活跃度，超时未更新自动亮红告警；支持一键 `🛑 急停中止` 与 `🔄 重新调起`，并配备全屏应用智能隐身免打扰模式。
+- **异步不卡顿**：所有 RPC 探测与磁盘任务扫描均在独立 `QThread` 后台线程执行，拖拽、切换丝滑无卡顿。
 
 ---
 
-## 🚀 启动与使用方式
+## 🚀 快速开始
 
-### 方式 1：双击一键无框启动 (推荐)
-直接双击运行目录下的：
-```
-start_monitor.bat
-```
-*(使用 pythonw.exe 后台静默启动，不会有黑色的 CMD 控制台窗口)*
+### 1. 环境准备
 
-### 方式 2：效果体验与仿真测试
-双击运行：
+确保已安装 **Python 3.10+**（Windows），并安装依赖：
+
+```bash
+pip install -r requirements.txt
 ```
+
+### 2. 一键无框启动
+
+直接双击运行目录中的：
+
+* **`start_monitor.bat`** 或 **`start_monitor.vbs`**（使用 `pythonw.exe` 后台静默启动，无黑色控制台窗口）
+
+也可以通过命令行启动：
+
+```bash
+pythonw float_monitor.py
+```
+
+### 3. 效果仿真测试
+
+如果想在不运行长任务的情况下体验三阶段动态推进效果，可双击运行：
+
+```bash
 simulate_task.bat
 ```
-即可在桌面悬浮窗中完整观看三阶段任务的动态推进与最终完成效果。
 
 ---
 
-## ⚙️ 规则生效机制 (无需手动干预)
-规则已自动配置进全局 `~/.gemini/config/GEMINI.md` 与 `~/.gemini/GEMINI.md`：
-- **`toolSummary`**：前台实时上屏，0 Token 损耗；
-- **`schedule` 探针**：长任务自动挂载 60 秒定时巡检，超时主动汇报并自愈；
-- **`task_status.json`**：Agent 在执行任务时会自动写入 `~/.gemini/task_status.json`，悬浮窗以 500ms 频率毫秒级自动刷新。
+## 📁 项目结构
+
+```text
+antigravity-float-monitor/
+├── float_monitor.py    # 悬浮窗主程序（PySide6 UI + 后台 RPC/文件监控线程）
+├── start_monitor.bat   # 一键启动脚本（Windows 批处理）
+├── start_monitor.vbs   # 静默无控制台启动脚本
+├── simulate_task.py    # 三阶段任务仿真测试脚本
+├── simulate_task.bat   # 仿真测试快捷启动
+├── sync_github.bat     # 一键提交并推送更新到 GitHub
+├── requirements.txt    # Python 依赖清单
+├── README.md           # 中文文档
+├── README.en.md        # English Documentation
+├── README.ja.md        # 日本語ドキュメント
+└── LICENSE             # MIT 开源协议
+```
+
+---
+
+## ⚙️ 任务状态文件规范（可选集成）
+
+除自动感知 Antigravity 会话外，悬浮窗也会监听 `~/.gemini/task_status.json` 与 `~/.gemini/tasks/*.json`。写入如下结构即可在大卡片中展示精细阶段清单：
+
+```json
+{
+  "task_name": "项目任务总名称",
+  "total_steps": 3,
+  "current_step": 2,
+  "current_step_name": "[2/3] 正在执行构建...",
+  "progress_pct": 60,
+  "status": "running",
+  "subtasks": [
+    { "title": "检查环境依赖", "status": "done", "pct": 100 },
+    { "title": "执行核心构建", "status": "running", "pct": 50 },
+    { "title": "验收与清理", "status": "pending", "pct": 0 }
+  ]
+}
+```
+
+---
+
+## 📄 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源，欢迎 Star、Fork 与提交 Issue / PR！
