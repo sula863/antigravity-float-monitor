@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+monitor_debug.log
+task_status.json
+grab_snap.py
+screenshot_test.png
+.vscode/
+.idea/
