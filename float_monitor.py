@@ -1942,14 +1942,20 @@ class MultiWindowMonitor(QWidget):
         if not self.is_pill_mode:
             return
         old_right = self.x() + self.width()
+        for lbl in (self.pill_win_badge, self.pill_dot, self.pill_task_badge,
+                    self.pill_quota_badge, self.pill_cost_badge, self.pill_timer_lbl):
+            lbl.updateGeometry()
+        if self.pill_frame.layout():
+            self.pill_frame.layout().invalidate()
+            self.pill_frame.layout().activate()
         self.pill_frame.setMinimumSize(260, 34)
-        self.pill_frame.setMaximumSize(560, 34)
-        self.pill_frame.adjustSize()
-        w = max(260, min(560, self.pill_frame.sizeHint().width() + 4))
+        self.pill_frame.setMaximumSize(580, 34)
+        w = max(260, min(580, self.pill_frame.sizeHint().width() + 6))
         self.pill_frame.setFixedSize(w, 34)
         self.setFixedSize(w, 34)
         if self.isVisible() and old_right > 0:
             self.move(old_right - w, self.y())
+            self.ensure_visible_on_screen()
 
     def update_view_mode(self):
         if self.is_pill_mode:
@@ -2282,6 +2288,7 @@ class MultiWindowMonitor(QWidget):
                 item = self.subtasks_container.takeAt(0)
                 w = item.widget()
                 if w:
+                    w.hide()
                     w.setParent(None)
                     w.deleteLater()
 
@@ -2319,7 +2326,12 @@ class MultiWindowMonitor(QWidget):
 
         self.check_heartbeat()
         if not self.is_pill_mode:
+            self.card_layout.invalidate()
+            self.card_layout.activate()
+            self.main_layout.invalidate()
+            self.main_layout.activate()
             self.adjustSize()
+            self.ensure_visible_on_screen()
         else:
             self._sync_pill_size()
             self.pill_frame.update()
