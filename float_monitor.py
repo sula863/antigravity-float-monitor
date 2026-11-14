@@ -62,6 +62,13 @@ GLOBAL_STATUS_PATH = os.path.expanduser(r"~\.gemini\task_status.json")
 CONV_DIR = os.path.expanduser(r"~\.gemini\antigravity\conversations")
 BRAIN_DIR = os.path.expanduser(r"~\.gemini\antigravity\brain")
 
+try:
+    from telemetry_wal import TelemetryReader, format_tokens
+except Exception:
+    TelemetryReader = None
+    def format_tokens(n):
+        return str(int(n or 0))
+
 
 class AntigravityRPC:
     """直连 Antigravity 本地语言服务 RPC 客户端 (极速时延 < 20ms)"""
@@ -755,9 +762,10 @@ class ProgressRing(QWidget):
 
 
 class DataRefreshWorker(QThread):
-    """后台异步拉取 RPC 任务与实时额度，彻底消除主线程卡顿"""
+    """后台异步拉取 RPC 任务、实时额度与本地 WAL Token 遥测，彻底消除主线程卡顿"""
     tasks_ready = Signal(list)
     quotas_ready = Signal(dict)
+    telemetry_ready = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -765,6 +773,8 @@ class DataRefreshWorker(QThread):
         self._wake_event = threading.Event()
         self._force_quota = True
         self._last_quota_ts = 0.0
+        self._last_telem_ts = 0.0
+        self._telemetry = TelemetryReader() if TelemetryReader else None
 
     def trigger_now(self, with_quota=False):
         if with_quota:
@@ -787,6 +797,15 @@ class DataRefreshWorker(QThread):
                         self.quotas_ready.emit(raw)
                 except Exception as e:
                     log(f"后台刷新实时额度异常: {e}")
+
+            if self._telemetry and (now - self._last_telem_ts >= 3.0):
+                self._last_telem_ts = now
+                try:
+                    telem = self._telemetry.get_summary()
+                    if telem and self._running:
+                        self.telemetry_ready.emit(telem)
+                except Exception as e:
+                    log(f"后台读取 WAL 遥测异常: {e}")
 
             try:
                 tasks = scan_all_tasks()
@@ -827,6 +846,8 @@ class MultiWindowMonitor(QWidget):
         self.task_elapsed_secs = {}
         self.manual_models = {}
         self.manual_status = {}
+        self.telemetry_data = {}
+        self.currency_mode = "USD"
         self.elapsed_sec = 0
 
         self.is_dragging = False
@@ -850,10 +871,11 @@ class MultiWindowMonitor(QWidget):
         self.sec_timer.timeout.connect(self.on_second_tick)
         self.sec_timer.start(1000)
 
-        # 启动后台异步拉取线程 (任务 1.5s / 额度 8s)
+        # 启动后台异步拉取线程 (任务 1.5s / WAL遥测 3s / 额度 8s)
         self.worker = DataRefreshWorker(self)
         self.worker.tasks_ready.connect(self.on_tasks_updated)
         self.worker.quotas_ready.connect(self.on_quotas_updated)
+        self.worker.telemetry_ready.connect(self.on_telemetry_updated)
         self.worker.start()
 
         self.update_view_mode()
@@ -1084,6 +1106,12 @@ class MultiWindowMonitor(QWidget):
         self.pill_quota_badge.setStyleSheet("color: #34D399; font-size: 10px; font-weight: bold; border:none; background: transparent;")
         self.pill_quota_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         pill_layout.addWidget(self.pill_quota_badge)
+
+        self.pill_cost_badge = QLabel("", self.pill_frame)
+        self.pill_cost_badge.setStyleSheet("color: #FBBF24; font-size: 10px; font-weight: bold; border:none; background: transparent;")
+        self.pill_cost_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.pill_cost_badge.setVisible(False)
+        pill_layout.addWidget(self.pill_cost_badge)
 
         self.pill_timer_lbl = QLabel("⏱ 00:00", self.pill_frame)
         self.pill_timer_lbl.setStyleSheet("color: #94A3B8; font-size: 10px; border:none; background: transparent;")
@@ -1400,6 +1428,33 @@ class MultiWindowMonitor(QWidget):
         all_models_box.addLayout(row2_box)
         self.card_layout.addLayout(all_models_box)
 
+        # ── Token 与 API 价值实时遥测条 (SQLite WAL 只读解析，点击切换 $/¥) ──
+        self.telemetry_bar = QFrame(self.card_frame)
+        self.telemetry_bar.setCursor(Qt.PointingHandCursor)
+        self.telemetry_bar.setStyleSheet("""
+            QFrame {
+                background-color: rgba(15, 23, 42, 0.55);
+                border: 1px solid rgba(56, 189, 248, 0.18);
+                border-radius: 6px;
+            }
+            QFrame:hover {
+                border: 1px solid rgba(56, 189, 248, 0.40);
+                background-color: rgba(30, 41, 59, 0.70);
+            }
+        """)
+        self.telemetry_bar.mousePressEvent = lambda e: self.toggle_currency_mode()
+        telem_layout = QVBoxLayout(self.telemetry_bar)
+        telem_layout.setContentsMargins(8, 5, 8, 5)
+        telem_layout.setSpacing(2)
+
+        self.telemetry_win_lbl = QLabel("🪙 本窗口: 正在读取本地 WAL 遥测...", self.telemetry_bar)
+        self.telemetry_win_lbl.setStyleSheet("color: #E2E8F0; font-size: 10px; font-weight: bold; border: none; background: transparent;")
+        self.telemetry_today_lbl = QLabel("⚡ 今日: -- · 15m速率: --", self.telemetry_bar)
+        self.telemetry_today_lbl.setStyleSheet("color: #94A3B8; font-size: 9px; border: none; background: transparent;")
+        telem_layout.addWidget(self.telemetry_win_lbl)
+        telem_layout.addWidget(self.telemetry_today_lbl)
+        self.card_layout.addWidget(self.telemetry_bar)
+
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border:none; max-height: 1px;")
@@ -1562,7 +1617,10 @@ class MultiWindowMonitor(QWidget):
 
             has_plan = t.get("has_stage_plan", False)
             step_tag = f"阶段 [{cur_s}/{tot_s}]" if (has_plan and tot_s > 1) else ("进行中" if status == "running" else ("已完成" if status == "completed" else "待命"))
-            action_text = f"{prefix}[W{idx+1}/{total}] {dot} {title[:14]} ({step_tag} | {spec_str})"
+            cid = t.get("_cid")
+            c_stat = self.telemetry_data.get("by_cid", {}).get(cid) if cid else None
+            tok_tag = f" · {format_tokens(c_stat['total'])}({self._format_cost(c_stat['usd'])})" if c_stat else ""
+            action_text = f"{prefix}[W{idx+1}/{total}] {dot} {title[:14]} ({step_tag} | {spec_str}{tok_tag})"
             action = menu.addAction(action_text)
             action.triggered.connect(lambda checked=False, i=idx: self.switch_to_window(i))
 
@@ -1885,9 +1943,9 @@ class MultiWindowMonitor(QWidget):
             return
         old_right = self.x() + self.width()
         self.pill_frame.setMinimumSize(260, 34)
-        self.pill_frame.setMaximumSize(480, 34)
+        self.pill_frame.setMaximumSize(560, 34)
         self.pill_frame.adjustSize()
-        w = max(260, min(480, self.pill_frame.sizeHint().width() + 4))
+        w = max(260, min(560, self.pill_frame.sizeHint().width() + 4))
         self.pill_frame.setFixedSize(w, 34)
         self.setFixedSize(w, 34)
         if self.isVisible() and old_right > 0:
@@ -1935,6 +1993,22 @@ class MultiWindowMonitor(QWidget):
         if raw:
             self.raw_quotas = raw
             self.apply_current_task()
+
+    def on_telemetry_updated(self, telem):
+        if telem:
+            self.telemetry_data = telem
+            self.apply_current_task()
+
+    def toggle_currency_mode(self):
+        self.currency_mode = "CNY" if self.currency_mode == "USD" else "USD"
+        self.apply_current_task()
+
+    def _format_cost(self, usd_val):
+        val = float(usd_val or 0.0)
+        if self.currency_mode == "CNY":
+            rate = float(self.telemetry_data.get("usd_to_cny", 7.20))
+            return f"¥{val * rate:.2f}"
+        return f"${val:.2f}" if val >= 0.01 or val == 0 else f"${val:.3f}"
 
     def on_tasks_updated(self, all_tasks):
         for t in all_tasks:
@@ -2086,6 +2160,51 @@ class MultiWindowMonitor(QWidget):
             f"💡 点击圆环可直接切换查看 [5小时] 或 [周] 额度"
         )
         self.pill_quota_badge.setToolTip(f"{q_info['full_name']}: {custom_pct_str} · {self.quota_refresh_desc}")
+
+        # 2.5 Token 与 API 价值遥测同步 (胶囊微标 + 卡片遥测条)
+        if self.telemetry_data:
+            today = self.telemetry_data.get("today", {})
+            week = self.telemetry_data.get("week", {})
+            burn = self.telemetry_data.get("burn_rate", {})
+            by_cid = self.telemetry_data.get("by_cid", {})
+            cid = data.get("_cid")
+            c_stat = by_cid.get(cid) if cid else None
+
+            today_cost_str = self._format_cost(today.get("usd", 0.0))
+            today_tok_str = format_tokens(today.get("tokens", 0))
+            burn_tok_str = format_tokens(burn.get("tok_per_min", 0))
+            burn_cost_str = self._format_cost(burn.get("usd_per_hr", 0.0))
+            week_cost_str = self._format_cost(week.get("usd", 0.0))
+            week_tok_str = format_tokens(week.get("tokens", 0))
+
+            self.pill_cost_badge.setText(f"🪙 {today_cost_str}")
+            self.pill_cost_badge.setVisible(True)
+
+            if c_stat:
+                win_tok_str = format_tokens(c_stat["total"])
+                win_cost_str = self._format_cost(c_stat["usd"])
+                self.telemetry_win_lbl.setText(
+                    f"🪙 本窗口: {win_tok_str} tok · {win_cost_str} ({c_stat['calls']}次调用)"
+                )
+                win_tip = (
+                    f"【当前窗口明细】\n"
+                    f"• 输入: {format_tokens(c_stat['in'])} · 缓存命中: {format_tokens(c_stat['cache'])}\n"
+                    f"• 输出: {format_tokens(c_stat['out'])} · 思考: {format_tokens(c_stat['think'])}\n"
+                )
+            else:
+                self.telemetry_win_lbl.setText(f"🪙 本窗口: 暂无独立记录 · 今日总计 {today_tok_str}")
+                win_tip = ""
+
+            self.telemetry_today_lbl.setText(
+                f"⚡ 今日 {today_tok_str} ({today_cost_str}) · 15m速率 {burn_tok_str}/m ({burn_cost_str}/h)"
+            )
+            self.telemetry_bar.setToolTip(
+                f"{win_tip}"
+                f"【今日汇总】{today_tok_str} ({today_cost_str} · {today.get('calls', 0)}次调用)\n"
+                f"• 输入: {format_tokens(today.get('in', 0))} · 缓存: {format_tokens(today.get('cache', 0))} · 输出: {format_tokens(today.get('out', 0))}\n"
+                f"【近 7 天】{week_tok_str} ({week_cost_str})\n"
+                f"💡 点击此处可切换 $ USD / ¥ CNY 计价"
+            )
 
         # 3. 底部全景四模型看板更新 (动态配色 + 高亮当前模型 + 补全周额度)
         if hasattr(self, 'badge_argon') and self.raw_quotas:
